@@ -1,0 +1,87 @@
+#!/bin/bash
+
+# filename: backup
+# purpose: backup data from our home directory to any of the list of 
+#   our external encrypted drives once an hour
+# notes:
+#   - the backup disk is encrypted with dm-crypt (luks)
+#   - assuming the mount point is ~/mnt/backup
+#   - assuming there are 4 external backup drives, namely b0, b1, b2 and
+#     b3 and there uuid are as follows:
+#       ["b0"]="b70aa112-9eb0-001d-7a01-ffe1febd48b3" 
+#       ["b1"]="180aa772-82b0-101d-0b11-abf1eebd18b2"
+#       ["b2"]="a01bc112-acb0-021e-7a21-dff1eebd08b0"
+#       ["b3"]="c50ad012-bcb0-301f-8a08-eff1eebd79a1")
+#   - assuming you save this file and duplicity.exclude_list inside
+#     ~/bin/backup
+
+# {{{ utility functions
+
+function show_help() {
+  cat <<EOF
+Usage: backup diskId
+
+Arguments:
+  - diskId: Disk ID is 'b0', 'b1', 'b2', or 'b3'
+EOF
+}
+
+# run when user presses ctrl+c
+function umount_and_luksclose() {
+  echo
+
+  local msg="ctrl+c trapped, give me around 90 seconds and I will "
+  msg="$msg finish my task"
+  echo $msg
+
+  sleep 60 &&
+  sudo umount ~/mnt/backup &&
+  sleep 30 &&
+  sudo cryptsetup luksClose backup-drive
+  echo "goodbye"
+  exit
+}
+
+# }}} utility functions
+
+# the main program starts here!
+
+# {{{ arguments validation
+
+if [ "$#" -ne 1 ] || [[ ! ( $1 =~ ^(b0|b1|b2|b3)$ ) ]]
+then
+  show_help
+  exit
+fi
+
+# }}} arguments validation
+
+disk_id=$1
+
+declare -A disk_uuids
+disk_uuids=(
+  ["b0"]="b70aa112-9eb0-001d-7a01-ffe1febd48b3" 
+  ["b1"]="180aa772-82b0-101d-0b11-abf1eebd18b2"
+  ["b2"]="a01bc112-acb0-021e-7a21-dff1eebd08b0"
+  ["b3"]="c50ad012-bcb0-301f-8a08-eff1eebd79a1")
+
+uuid="${disk_uuids[$disk_id]}"
+
+# luksopen and mount the backup drive
+sudo cryptsetup luksOpen /dev/disk/by-uuid/$uuid backup-drive &&
+sudo mount /dev/mapper/backup-drive ~/mnt/backup &&
+
+trap umount_and_luksclose INT
+
+while [ true ]
+do
+  echo "backing up ~"
+  duplicity --no-encryption \
+    --exclude-filelist ~/bin/backup/duplicity.exclude_list \
+    ~ file:///home/debian/mnt/backup/backup/duplicity-my-main-machine &&
+
+  date
+  echo "sleep for 60 minutes, will backup again after waking up"
+  sleep 3600
+  date
+done
